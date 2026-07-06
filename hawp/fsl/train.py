@@ -9,7 +9,6 @@ import argparse
 import logging
 import json
 from tqdm import tqdm
-from torch.utils.tensorboard import SummaryWriter
 
 import hawp
 from hawp.base.utils.comm import to_device
@@ -27,6 +26,19 @@ from hawp.fsl.solver import make_lr_scheduler, make_optimizer
 from hawp.fsl.utils import reached_debug_limit
 
 AVAILABLE_DATASETS = ('wireframe_test', 'york_test')
+
+def make_summary_writer(log_dir):
+    try:
+        from torch.utils.tensorboard import SummaryWriter
+    except ModuleNotFoundError as exc:
+        if exc.name == "tensorboard":
+            raise ModuleNotFoundError(
+                "tensorboard is required for hawp.fsl.train; "
+                "install it with `pip install tensorboard` or `pip install -r requirement.txt`"
+            ) from exc
+        raise
+    return SummaryWriter(log_dir)
+
 
 def get_output_dir(root, basename):
     timestamp = datetime.datetime.now().strftime('%y%m%d-%H%M%S')
@@ -102,7 +114,7 @@ def train(cfg, model, train_dataset, optimizer, scheduler, loss_reducer, checkpo
     step = 0
     # experiment.clean()
 
-    writer = SummaryWriter(osp.join(cfg.OUTPUT_DIR, "tensorboard"))
+    writer = make_summary_writer(osp.join(cfg.OUTPUT_DIR, "tensorboard"))
     max_iters = arguments.get("max_iters")
     
     for epoch in range(start_epoch+1, start_epoch+num_epochs+1):

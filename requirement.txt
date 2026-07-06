@@ -14,3 +14,4 @@ easydict
 rawpy
 colour-demosaicing
 scipy
+tensorboard
