@@ -107,9 +107,7 @@ class SuperPoint(nn.Module):
 
         print('Loaded SuperPoint model')
 
-    def forward(self, data):
-        """ Compute keypoints, scores, descriptors for image """
-        # Shared Encoder
+    def _shared_encoder(self, data):
         features = []
         x = self.relu(self.conv1a(data))
         x = self.relu(self.conv1b(x))
@@ -126,10 +124,31 @@ class SuperPoint(nn.Module):
         x = self.pool(x)
         x = self.relu(self.conv4a(x))
         x = self.relu(self.conv4b(x))
+        return x, features
 
+    def forward_dense(self, data):
+        """Compute dense detector logits and descriptors for distillation."""
+        x, features = self._shared_encoder(data)
         # Compute the dense keypoint scores
         cPa = self.relu(self.convPa(x))
-        scores = self.convPb(cPa)
+        detector_logits = self.convPb(cPa)
+        detector_log_probs = torch.nn.functional.log_softmax(detector_logits, dim=1)
+
+        cDa = self.relu(self.convDa(x))
+        dense_descriptors = self.convDb(cDa)
+        dense_descriptors = torch.nn.functional.normalize(dense_descriptors, p=2, dim=1)
+        return {
+            'features': features,
+            'detector_logits': detector_logits,
+            'detector_log_probs': detector_log_probs,
+            'dense_descriptors': dense_descriptors,
+        }
+
+    def forward(self, data):
+        """ Compute keypoints, scores, descriptors for image """
+        dense_outputs = self.forward_dense(data)
+        features = dense_outputs['features']
+        scores = dense_outputs['detector_logits']
         scores = torch.nn.functional.softmax(scores, 1)[:, :-1]
         b, _, h, w = scores.shape
         scores = scores.permute(0, 2, 3, 1).reshape(b, h, w, 8, 8)
@@ -157,9 +176,7 @@ class SuperPoint(nn.Module):
         keypoints = [torch.flip(k, [1]).float() for k in keypoints]
 
         # Compute the dense descriptors
-        cDa = self.relu(self.convDa(x))
-        descriptors = self.convDb(cDa)
-        descriptors = torch.nn.functional.normalize(descriptors, p=2, dim=1)
+        descriptors = dense_outputs['dense_descriptors']
 
         # Extract descriptors
         descriptors = [sample_descriptors(k[None], d[None], 8)[0]

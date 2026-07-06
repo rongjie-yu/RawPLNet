@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import Dataset
 
+import itertools
 import os.path as osp
 import json
 import cv2
@@ -13,6 +14,8 @@ from torch.utils.data.dataloader import DataLoader
 import matplotlib.pyplot as plt
 from torchvision.transforms import functional as F
 import copy
+
+from hawp.fsl.raw import RawSynthesisConfig, RawSynthesizer
 
 
 
@@ -29,7 +32,7 @@ def add_shade(img, random_state=None, nb_ellipses=20,
         random_state = np.random.RandomState(None)
     transparency = random_state.uniform(*amplitude)
 
-    min_dim = min(img.shape) / 4
+    min_dim = min(img.shape[:2]) / 4
     mask = np.zeros(img.shape[:2], np.uint8)
     for i in range(nb_ellipses):
         ax = int(max(random_state.rand() * min_dim, min_dim / 5))
@@ -45,7 +48,10 @@ def add_shade(img, random_state=None, nb_ellipses=20,
     if (kernel_size % 2) == 0:  # kernel_size has to be odd
         kernel_size += 1
     mask = cv2.GaussianBlur(mask.astype(np.float64), (kernel_size, kernel_size), 0)
-    shaded = img * (1 - transparency * mask/255.)
+    shade = 1 - transparency * mask / 255.
+    if img.ndim == 3:
+        shade = shade[..., None]
+    shaded = img * shade
     shaded = np.clip(shaded, 0, 255)
     return shaded.astype(np.uint8)
 
@@ -63,7 +69,7 @@ def add_fog(img, random_state=None, max_nb_ellipses=20,
 
     centers = np.empty((0, 2), dtype=np.int32)
     rads = np.empty((0, 1), dtype=np.int32)
-    min_dim = min(img.shape) / 4
+    min_dim = min(img.shape[:2]) / 4
     shaded_img = img.copy()
     for i in range(max_nb_ellipses):
         ax = int(max(random_state.rand() * min_dim, min_dim / 5))
@@ -120,37 +126,6 @@ def motion_blur(img, max_ksize=8):
     img = cv2.filter2D(img.astype(np.uint8), -1, kernel)
     return img
 
-# def additive_gaussian_noise(img, random_state=None, std=(0, 10)):
-def additive_gaussian_noise(img, random_state=None, std=(0, 15)):
-    """ Add gaussian noise to the current image pixel-wise
-    Parameters:
-      std: the standard deviation of the filter will be between std[0] and std[0]+std[1]
-    """
-    if random_state is None:
-        random_state = np.random.RandomState(None)
-    sigma = std[0] + random_state.rand() * std[1]
-    gaussian_noise = random_state.randn(*img.shape) * sigma
-    noisy_img = img + gaussian_noise
-    noisy_img = np.clip(noisy_img, 0, 255).astype(np.uint8)
-    return noisy_img
-
-
-# def additive_speckle_noise(img, intensity=1):
-def additive_speckle_noise(img, intensity=2):
-    """ Add salt and pepper noise to an image
-    Parameters:
-      intensity: the higher, the more speckles there will be
-    """
-    noise = np.zeros(img.shape, dtype=np.uint8)
-    cv2.randu(noise, 0, 256)
-    black = noise < intensity
-    white = noise > 255 - intensity
-    noisy_img = img.copy()
-    noisy_img[white > 0] = 255
-    noisy_img[black > 0] = 0
-    return noisy_img
-
-
 # def random_brightness(img, random_state=None, max_change=50):
 def random_brightness(img, random_state=None, max_change=80):
     """ Change the brightness of img
@@ -180,12 +155,50 @@ def random_contrast(img, random_state=None, max_change=[0.5, 2.0]):
 
 
 class TrainDataset(Dataset):
-    def __init__(self, root, ann_file, transform = None, augmentation = 4):
+    def __init__(
+        self,
+        root,
+        ann_file,
+        transform=None,
+        augmentation=4,
+        raw_config=None,
+        raw_synthesizer=None,
+        return_rgb=False,
+        step_counter=None,
+    ):
         self.root = root
         with open(ann_file,'r') as _:
             self.annotations = json.load(_)
         self.transform = transform
         self.augmentation = augmentation
+        self.return_rgb = return_rgb
+        self.raw_config = self._normalize_raw_config(raw_config)
+        if not self.return_rgb and raw_synthesizer is None and self.raw_config is None:
+            raise ValueError("RawPLNet training requires DATASETS.RAW config; RGB fallback is disabled")
+        self.raw_synthesizer = raw_synthesizer
+        if not self.return_rgb and self.raw_synthesizer is None:
+            self.raw_synthesizer = RawSynthesizer(
+                self.raw_config,
+                device=getattr(raw_config, "DEVICE", "cuda"),
+            )
+        self.step_counter = self._normalize_step_counter(step_counter)
+
+    def _normalize_raw_config(self, raw_config):
+        if raw_config is None or isinstance(raw_config, RawSynthesisConfig):
+            return raw_config
+        return RawSynthesisConfig.from_cfg(raw_config)
+
+    def _normalize_step_counter(self, step_counter):
+        if step_counter is None:
+            return itertools.count()
+        if isinstance(step_counter, int):
+            return itertools.count(step_counter)
+        return step_counter
+
+    def _next_raw_step(self):
+        if callable(self.step_counter):
+            return int(self.step_counter())
+        return int(next(self.step_counter))
     
     def __getitem__(self, idx_):
         # print(idx_)
@@ -201,10 +214,12 @@ class TrainDataset(Dataset):
         if len(ann['edges_negative']) == 0:
             ann['edges_negative'] = [[0,0]]
         ann['reminder'] = reminder
-        # image = cv2.imread(osp.join(self.root,ann['filename']), cv2.IMREAD_GRAYSCALE).astype(float)
-
-        image = cv2.imread(osp.join(self.root,ann['filename']), cv2.IMREAD_GRAYSCALE)
-        data_aug_random = random.randint(1, 10)
+        image_path = osp.join(self.root,ann['filename'])
+        image = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        if image is None:
+            raise FileNotFoundError(image_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        data_aug_random = random.randint(1, 7)
         if data_aug_random == 1:
             image = add_shade(image)
         elif data_aug_random == 2:
@@ -212,19 +227,10 @@ class TrainDataset(Dataset):
         elif data_aug_random == 3:
             image = motion_blur(image)
         elif data_aug_random == 4:
-            image = additive_gaussian_noise(image)
-        elif data_aug_random == 5:
-            image = additive_speckle_noise(image)
-        elif data_aug_random == 6:
             image = random_brightness(image)
-        elif data_aug_random == 7:
+        elif data_aug_random == 5:
             image = random_contrast(image)
-        image = image.astype(float)
-
-        if len(image.shape) == 2:
-            image = np.concatenate([image[...,None],image[...,None],image[...,None]],axis=-1)
-        else:
-            image = image[:,:,:3]
+        image = image[:,:,:3]
 
         # if len(ann['junctions']) == 0:
         #     ann['junctions'] = [[0,0]]
@@ -279,6 +285,11 @@ class TrainDataset(Dataset):
             image = image_rotated
         # elif reminder == 6:
 
+        if not self.return_rgb:
+            image = self.raw_synthesizer.synthesize_rgb(image, iter_idx=self._next_raw_step())
+            image = np.clip(image, 0.0, 1.0) * 255.0
+
+        image = image.astype(float)
 
         if self.transform is not None:
             return self.transform(image,ann)

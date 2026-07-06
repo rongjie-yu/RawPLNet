@@ -11,3 +11,6 @@ pycolmap
 seaborn
 kornia
 easydict
+rawpy
+colour-demosaicing
+scipy

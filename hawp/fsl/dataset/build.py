@@ -24,7 +24,7 @@ def build_transform(cfg):
         )
 
     return transforms
-def build_train_dataset(cfg):
+def build_train_dataset(cfg, return_rgb=False, step_counter=None):
     assert len(cfg.DATASETS.TRAIN) == 1
     name = cfg.DATASETS.TRAIN[0]
     dargs = DatasetCatalog.get(name)
@@ -32,6 +32,9 @@ def build_train_dataset(cfg):
     factory = getattr(train_dataset,dargs['factory'])
     args = dargs['args']
     args['augmentation'] = cfg.DATASETS.AUGMENTATION
+    args['raw_config'] = None if return_rgb else cfg.DATASETS.RAW
+    args['return_rgb'] = return_rgb
+    args['step_counter'] = step_counter
     args['transform'] = Compose(
                                 [Resize(cfg.DATASETS.IMAGE.HEIGHT,
                                         cfg.DATASETS.IMAGE.WIDTH,

@@ -2,6 +2,7 @@ outputs/*
 **/*.DS_Store
 parsing/data/wireframe/images/*
 .vscode/*
+pretrained/plnet.pth
 data/*
 data
 

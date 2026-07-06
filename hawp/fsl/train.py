@@ -24,6 +24,7 @@ from hawp.fsl.config import cfg
 from hawp.fsl.config.paths_catalog import DatasetCatalog
 from hawp.fsl.model.build import build_model
 from hawp.fsl.solver import make_lr_scheduler, make_optimizer
+from hawp.fsl.utils import reached_debug_limit
 
 AVAILABLE_DATASETS = ('wireframe_test', 'york_test')
 
@@ -101,7 +102,8 @@ def train(cfg, model, train_dataset, optimizer, scheduler, loss_reducer, checkpo
     step = 0
     # experiment.clean()
 
-    writer = SummaryWriter('/media/code/ubuntu_files/tmp/hawp/log/ours')
+    writer = SummaryWriter(osp.join(cfg.OUTPUT_DIR, "tensorboard"))
+    max_iters = arguments.get("max_iters")
     
     for epoch in range(start_epoch+1, start_epoch+num_epochs+1):
         model.train()            
@@ -165,10 +167,15 @@ def train(cfg, model, train_dataset, optimizer, scheduler, loss_reducer, checkpo
                 )
 
             writer.add_scalar("loss", loss_reduced, step)
+            if reached_debug_limit(max_iters, step):
+                logger.info("Stopping early after %d iterations for debug run", step)
+                break
 
         scheduler.step()
 
         checkpointer.save('model_{:05d}'.format(epoch))
+        if reached_debug_limit(max_iters, step):
+            break
                 
     writer.close()
     total_training_time = time.time() - start_training_time
@@ -176,7 +183,7 @@ def train(cfg, model, train_dataset, optimizer, scheduler, loss_reducer, checkpo
 
     logger.info(
         "Total training time: {} ({:.4f} s / epoch)".format(
-            total_time_str, total_training_time / (max_epoch)
+            total_time_str, total_training_time / max(1, epoch - start_epoch)
         )
     )
 
@@ -201,6 +208,7 @@ if __name__ == "__main__":
     
     parser.add_argument('--tf32', default=False, action='store_true', help='toggle on the TF32 of pytorch')
     parser.add_argument('--dtm', default=True, choices=[True, False], help='toggle the deterministic option of CUDNN. This option will affect the replication of experiments')
+    parser.add_argument('--max-iters', default=None, type=int, help='stop after this many train iterations for local debug')
 
     args = parser.parse_args()
     torch.backends.cudnn.allow_tf32 = args.tf32
@@ -253,6 +261,7 @@ if __name__ == "__main__":
     arguments["epoch"] = 0
     max_epoch = cfg.SOLVER.MAX_EPOCH
     arguments["max_epoch"] = max_epoch
+    arguments["max_iters"] = args.max_iters
 
     checkpointer = DetectronCheckpointer(cfg,
                                          model,
@@ -268,8 +277,4 @@ if __name__ == "__main__":
     train_dataset = build_train_dataset(cfg)
     
     logger.info('epoch size = {}'.format(len(train_dataset)))
-    train(cfg, model, train_dataset, optimizer, scheduler, loss_reducer, checkpointer, arguments)    
-
-                                         
-    
-    import pdb; pdb.set_trace()
+    train(cfg, model, train_dataset, optimizer, scheduler, loss_reducer, checkpointer, arguments)
