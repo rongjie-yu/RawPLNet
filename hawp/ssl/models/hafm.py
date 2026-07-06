@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from torch.utils.data.dataloader import default_collate
 
-from hawp.base.csrc import _C
+from hawp.base.csrc import require_C
 
 class HAFMencoder(object):
     def __init__(self, cfg):
@@ -22,12 +22,12 @@ class HAFMencoder(object):
             width = annotations['width']//stride
             height = annotations['height']//stride
             edge_indices = annotations['line_map'][batch_id].triu().nonzero()
-            
+
             t, m = self.encoding_single_image(junctions,edge_indices,height,width)
-            
+
             targets.append(t)
             metas.append(m)
-        
+
         return default_collate(targets),metas
 
     def adjacent_matrix(self, n, edges, device):
@@ -44,8 +44,8 @@ class HAFMencoder(object):
             hafm_dis = torch.zeros((1,height,width),device=device)
             hafm_mask = torch.zeros((1,height,width),device=device)
             return torch.zeros((3,height,width),device=device), torch.zeros((1,height,width),device=device), torch.zeros((1,height,width),device=device)
-        
-        lmap, _, _ = _C.encodels(lines,height,width,height,width,lines.size(0))
+
+        lmap, _, _ = require_C().encodels(lines,height,width,height,width,lines.size(0))
         dismap = torch.sqrt(lmap[0]**2+lmap[1]**2)[None]
         def _normalize(inp):
             mag = torch.sqrt(inp[0]*inp[0]+inp[1]*inp[1])
@@ -80,7 +80,7 @@ class HAFMencoder(object):
         pos_[1] = pos_[1].clamp(min=1e-9)
         neg_[0] = neg_[0].clamp(min=1e-9)
         neg_[1] = neg_[1].clamp(max=-1e-9)
-        
+
         mask = (dismap.view(-1)<=self.dis_th).float()
 
         pos_map = pos_.reshape(-1,height,width)
@@ -120,7 +120,7 @@ class HAFMencoder(object):
             joff[0,yint,xint] = off_x
             joff[1,yint,xint] = off_y
 
-            lines = junctions[edge_indices].reshape(-1,4)        
+            lines = junctions[edge_indices].reshape(-1,4)
             pos_mat = self.adjacent_matrix(junctions.size(0), edge_indices, device)
             labels = torch.ones((lines.shape[0],),device=device)
         else:
@@ -130,7 +130,7 @@ class HAFMencoder(object):
         jmap = torch.from_numpy(jmap).to(device)
         joff = torch.from_numpy(joff).to(device)
         hafm_ang, hafm_dis, hafm_mask = self.lines2hafm(lines,height,width)
-        
+
 
         target = {
             'jloc': jmap[None],
@@ -148,4 +148,4 @@ class HAFMencoder(object):
             'lpre_label': labels
         }
         return target, meta
-    
+

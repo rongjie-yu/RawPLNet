@@ -51,6 +51,15 @@ python -c "import torch; print(torch.__version__); print(torch.cuda.is_available
 
 Do not start training until `torch.cuda.is_available()` prints `True`.
 
+Line training also needs the HAWP C/CUDA extension used by HAFM encoding. The extension is JIT-built by PyTorch and needs CUDA, `nvcc`, a compatible C++ compiler, and `ninja`. Verify it before running the smoke train command:
+
+```bash
+mkdir -p outputs/torch_extensions
+python -c "from hawp.base.csrc import require_C; print(require_C().encodels)"
+```
+
+If this command fails, fix the compiler/CUDA environment first. The line-training smoke command cannot pass while `require_C()` fails.
+
 ## 3. Prepare The Dataset
 
 The dataset catalog resolves data under the repository `data/` path. Create a symlink to the prepared Point-Line dataset:
@@ -123,6 +132,7 @@ Run static/import checks:
 ```bash
 python -m compileall hawp evaluation
 python -m unittest discover tests -v
+python -c "from hawp.base.csrc import require_C; print(require_C().encodels)"
 ```
 
 Run the local debug smoke commands before a long server job:

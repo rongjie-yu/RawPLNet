@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 class RequirementsTest(unittest.TestCase):
-    def test_tensorboard_is_declared_for_training_summary_writer(self):
+    def test_runtime_requirements_cover_training_and_csrc_build(self):
         root = Path(__file__).resolve().parents[1]
         requirements = {
             line.strip().split("==", 1)[0].split(">=", 1)[0].lower()
@@ -12,6 +12,7 @@ class RequirementsTest(unittest.TestCase):
         }
 
         self.assertIn("tensorboard", requirements)
+        self.assertIn("ninja", requirements)
 
 
 if __name__ == "__main__":

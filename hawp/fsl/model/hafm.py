@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from torch.utils.data.dataloader import default_collate
 
-from hawp.base import _C
+from hawp.base.csrc import require_C
 
 class HAFMencoder(object):
     def __init__(self, cfg):
@@ -18,7 +18,7 @@ class HAFMencoder(object):
             t,m = self._process_per_image(ann)
             targets.append(t)
             metas.append(m)
-        
+
         return default_collate(targets),metas
 
     def adjacent_matrix(self, n, edges, device):
@@ -57,12 +57,12 @@ class HAFMencoder(object):
 
         edges_positive = ann['edges_positive']
         edges_negative = ann['edges_negative']
-        
+
         pos_mat = self.adjacent_matrix(junctions.size(0),edges_positive,device)
-        neg_mat = self.adjacent_matrix(junctions.size(0),edges_negative,device)        
+        neg_mat = self.adjacent_matrix(junctions.size(0),edges_negative,device)
         lines = torch.cat((junctions[edges_positive[:,0]], junctions[edges_positive[:,1]]),dim=-1)
         lines_neg = torch.cat((junctions[edges_negative[:2000,0]],junctions[edges_negative[:2000,1]]),dim=-1)
-        lmap, _, _ = _C.encodels(lines,height,width,height,width,lines.size(0))
+        lmap, _, _ = require_C().encodels(lines,height,width,height,width,lines.size(0))
 
         center_points = (lines[:,:2] + lines[:,2:])/2.0
         cmap = torch.zeros((height,width),device=device)
@@ -81,7 +81,7 @@ class HAFMencoder(object):
         # lneg = lines_neg[torch.randperm(lines_neg.size(0),device=device)][:self.num_static_neg_lines]
         lpos = torch.from_numpy(lpos).to(device)
         lneg = torch.from_numpy(lneg).to(device)
-        
+
         lpre = torch.cat((lpos,lneg),dim=0)
         _swap = (torch.rand(lpre.size(0))>0.5).to(device)
         lpre[_swap] = lpre[_swap][:,[2,3,0,1]]
@@ -133,7 +133,7 @@ class HAFMencoder(object):
         pos_[1] = pos_[1]#.clamp(min=1e-9)
         neg_[0] = neg_[0]#.clamp(min=1e-9)
         neg_[1] = neg_[1]#.clamp(max=-1e-9)
-        
+
         mask = (dismap.view(-1)<=self.dis_th).float()
 
         pos_map = pos_.reshape(-1,height,width)
