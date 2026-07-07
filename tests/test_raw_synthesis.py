@@ -63,6 +63,35 @@ class RawSynthesizerTest(unittest.TestCase):
                 output_mode="rgb",
             )
 
+    def test_synthesizer_applies_configured_noise_ratio_range_to_simulator(self):
+        simulator = FakeSimulator()
+        synth = RawSynthesizer(
+            RawSynthesisConfig(
+                invisp_checkpoint="/tmp/fake.pth",
+                noise_ratio_min=1.0,
+                noise_ratio_max=50.0,
+            ),
+            simulator=simulator,
+        )
+
+        self.assertIs(synth.simulator, simulator)
+        self.assertEqual(simulator.ratio_min, 1.0)
+        self.assertEqual(simulator.ratio_max, 50.0)
+
+    def test_noise_simulator_exposure_ratio_uses_warmup_decay(self):
+        from hawp.fsl.raw import noise_simulator
+
+        simulator = object.__new__(noise_simulator.NoiseSimulator)
+        simulator.ratio_min = 1.0
+        simulator.ratio_max = 50.0
+        original_uniform = noise_simulator.random.uniform
+        noise_simulator.random.uniform = lambda low, high: high
+        try:
+            self.assertEqual(simulator._sample_exposure_ratio(0.0), 1.0)
+            self.assertEqual(simulator._sample_exposure_ratio(1.0), 50.0)
+        finally:
+            noise_simulator.random.uniform = original_uniform
+
 
 if __name__ == "__main__":
     unittest.main()

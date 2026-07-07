@@ -24,7 +24,9 @@ def build_transform(cfg):
         )
 
     return transforms
-def build_train_dataset(cfg, return_rgb=False, step_counter=None):
+def build_train_dataset(cfg, return_rgb=False, return_adapt_pair=False, step_counter=None):
+    if return_rgb and return_adapt_pair:
+        raise ValueError("return_rgb and return_adapt_pair are mutually exclusive")
     assert len(cfg.DATASETS.TRAIN) == 1
     name = cfg.DATASETS.TRAIN[0]
     dargs = DatasetCatalog.get(name)
@@ -34,6 +36,7 @@ def build_train_dataset(cfg, return_rgb=False, step_counter=None):
     args['augmentation'] = cfg.DATASETS.AUGMENTATION
     args['raw_config'] = None if return_rgb else cfg.DATASETS.RAW
     args['return_rgb'] = return_rgb
+    args['return_adapt_pair'] = return_adapt_pair
     args['step_counter'] = step_counter
     args['transform'] = Compose(
                                 [Resize(cfg.DATASETS.IMAGE.HEIGHT,

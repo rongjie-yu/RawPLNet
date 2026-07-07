@@ -87,6 +87,38 @@ class TrainDatasetRawTest(unittest.TestCase):
         self.assertEqual(ann["width"], 4)
         self.assertEqual(ann["height"], 4)
 
+    def test_adapt_dataset_synthesizes_raw_before_transform_and_returns_teacher_gray(self):
+        import hawp.fsl.dataset.train_dataset as train_dataset
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_root, ann_file = self._make_tiny_wireframe_dataset(Path(tmpdir))
+            fake_synth = FakeRawSynthesizer()
+            original_randint = train_dataset.random.randint
+            train_dataset.random.randint = lambda a, b: 5
+            try:
+                dataset = TrainDataset(
+                    str(image_root),
+                    str(ann_file),
+                    transform=Compose([Resize(2, 2, 2, 2), ToTensor()]),
+                    augmentation=1,
+                    raw_config=RawSynthesisConfig(invisp_checkpoint="/tmp/fake.pth"),
+                    raw_synthesizer=fake_synth,
+                    return_adapt_pair=True,
+                )
+
+                (teacher_gray, student_raw), ann = dataset[0]
+            finally:
+                train_dataset.random.randint = original_randint
+
+        self.assertEqual(fake_synth.seen_rgb.shape, (4, 4, 3))
+        np.testing.assert_array_equal(fake_synth.seen_rgb[0, 0], np.array([10, 20, 30]))
+        self.assertEqual(tuple(teacher_gray.shape), (1, 2, 2))
+        self.assertEqual(tuple(student_raw.shape), (3, 2, 2))
+        self.assertAlmostEqual(float(teacher_gray[0, 0, 0]), (0.299 * 10 + 0.587 * 20 + 0.114 * 30) / 255.0)
+        self.assertAlmostEqual(student_raw[0].min().item(), 0.25)
+        self.assertEqual(ann["width"], 2)
+        self.assertEqual(ann["height"], 2)
+
     def test_train_dataset_uses_global_raw_step_counter_not_sample_index(self):
         import hawp.fsl.dataset.train_dataset as train_dataset
 

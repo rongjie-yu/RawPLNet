@@ -19,7 +19,7 @@ from .noise import camera_params, addGStarNoise, addPStarNoise, addQuantNoise, a
 
 
 class NoiseSimulator:
-    def __init__(self, device, ckpt_path='./datasets/InvISP/pretrained/canon.pth'):
+    def __init__(self, device, ckpt_path='./datasets/InvISP/pretrained/canon.pth', ratio_min=1.0, ratio_max=50.0):
         self.device = device
 
         # load Invertible ISP Network
@@ -33,10 +33,13 @@ class NoiseSimulator:
         # use Canon EOS 5D4 noise parameters provided by ELD
         self.camera_params = camera_params
 
-        # random specify exposure time ratio from 50 to 150
-        self.ratio_min = 50
-        self.ratio_max = 150
+        self.ratio_min = float(ratio_min)
+        self.ratio_max = float(ratio_max)
         pass
+
+    def _sample_exposure_ratio(self, ratio_dec):
+        ratio_dec = min(max(float(ratio_dec), 0.0), 1.0)
+        return (random.uniform(self.ratio_min, self.ratio_max) - 1) * ratio_dec + 1
 
     # inverse demosaic
     # input: [H, W, 3]
@@ -130,7 +133,7 @@ class NoiseSimulator:
 
     def raw2noisyRaw(self, raw, ratio_dec=1, batched=False):
         if not batched:
-            ratio = (random.uniform(self.ratio_min, self.ratio_max) - 1) * ratio_dec + 1
+            ratio = self._sample_exposure_ratio(ratio_dec)
             raw = raw.copy() / ratio
 
             K = sampleK(self.camera_params['Kmin'], self.camera_params['Kmax'])
@@ -146,7 +149,7 @@ class NoiseSimulator:
         else:
             raw = raw.copy()
             for i in range(raw.shape[0]):
-                ratio = random.uniform(self.ratio_min, self.ratio_max)
+                ratio = self._sample_exposure_ratio(ratio_dec)
                 raw[i] /= ratio
 
                 K = sampleK(self.camera_params['Kmin'], self.camera_params['Kmax'])

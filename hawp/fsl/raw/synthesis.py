@@ -8,7 +8,9 @@ import numpy as np
 class RawSynthesisConfig:
     invisp_checkpoint: str
     enable_eld_noise: bool = True
-    noise_maxstep: int = 10000
+    noise_maxstep: int = 15000
+    noise_ratio_min: float = 1.0
+    noise_ratio_max: float = 50.0
     output_mode: str = "gray_replicated"
 
     def __post_init__(self):
@@ -16,6 +18,10 @@ class RawSynthesisConfig:
             raise ValueError("RawPLNet training does not support RGB fallback output modes")
         if self.noise_maxstep <= 0:
             raise ValueError("noise_maxstep must be positive")
+        if self.noise_ratio_min < 1.0:
+            raise ValueError("noise_ratio_min must be at least 1")
+        if self.noise_ratio_max < self.noise_ratio_min:
+            raise ValueError("noise_ratio_max must be greater than or equal to noise_ratio_min")
 
     @classmethod
     def from_cfg(cls, cfg):
@@ -23,6 +29,8 @@ class RawSynthesisConfig:
             invisp_checkpoint=str(cfg.INVISP_CHECKPOINT),
             enable_eld_noise=bool(cfg.ENABLE_ELD_NOISE),
             noise_maxstep=int(cfg.NOISE_MAXSTEP),
+            noise_ratio_min=float(cfg.NOISE_RATIO_MIN) if "NOISE_RATIO_MIN" in cfg else 1.0,
+            noise_ratio_max=float(cfg.NOISE_RATIO_MAX) if "NOISE_RATIO_MAX" in cfg else 50.0,
             output_mode=str(cfg.OUTPUT_MODE),
         )
 
@@ -37,8 +45,18 @@ class RawSynthesizer:
                 raise FileNotFoundError(config.invisp_checkpoint)
             from .noise_simulator import NoiseSimulator
 
-            simulator = NoiseSimulator(device=device, ckpt_path=config.invisp_checkpoint)
+            simulator = NoiseSimulator(
+                device=device,
+                ckpt_path=config.invisp_checkpoint,
+                ratio_min=config.noise_ratio_min,
+                ratio_max=config.noise_ratio_max,
+            )
         self.simulator = simulator
+        self._configure_noise_ratio_range()
+
+    def _configure_noise_ratio_range(self):
+        self.simulator.ratio_min = self.config.noise_ratio_min
+        self.simulator.ratio_max = self.config.noise_ratio_max
 
     def synthesize_rgb(self, rgb, iter_idx=0):
         rgb_float = self._as_float_rgb(rgb)

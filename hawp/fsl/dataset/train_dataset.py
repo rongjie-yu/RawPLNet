@@ -18,6 +18,14 @@ import copy
 from hawp.fsl.raw import RawSynthesisConfig, RawSynthesizer
 
 
+def rgb_to_grayscale_image(image):
+    arr = np.asarray(image)
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        raise ValueError("RGB image must have shape H x W x 3")
+    gray = 0.299 * arr[..., 0] + 0.587 * arr[..., 1] + 0.114 * arr[..., 2]
+    return gray[..., None].astype(np.float32)
+
+
 
 def add_shade(img, random_state=None, nb_ellipses=20,
               amplitude=[-0.5, 0.5], kernel_size_interval=(250, 350)):
@@ -164,6 +172,7 @@ class TrainDataset(Dataset):
         raw_config=None,
         raw_synthesizer=None,
         return_rgb=False,
+        return_adapt_pair=False,
         step_counter=None,
     ):
         self.root = root
@@ -172,11 +181,15 @@ class TrainDataset(Dataset):
         self.transform = transform
         self.augmentation = augmentation
         self.return_rgb = return_rgb
+        self.return_adapt_pair = return_adapt_pair
+        if self.return_rgb and self.return_adapt_pair:
+            raise ValueError("return_rgb and return_adapt_pair are mutually exclusive")
         self.raw_config = self._normalize_raw_config(raw_config)
-        if not self.return_rgb and raw_synthesizer is None and self.raw_config is None:
+        needs_raw = not self.return_rgb
+        if needs_raw and raw_synthesizer is None and self.raw_config is None:
             raise ValueError("RawPLNet training requires DATASETS.RAW config; RGB fallback is disabled")
         self.raw_synthesizer = raw_synthesizer
-        if not self.return_rgb and self.raw_synthesizer is None:
+        if needs_raw and self.raw_synthesizer is None:
             self.raw_synthesizer = RawSynthesizer(
                 self.raw_config,
                 device=getattr(raw_config, "DEVICE", "cuda"),
@@ -199,6 +212,16 @@ class TrainDataset(Dataset):
         if callable(self.step_counter):
             return int(self.step_counter())
         return int(next(self.step_counter))
+
+    def _transform_adapt_pair(self, teacher_image, student_image, ann):
+        if self.transform is None:
+            return (teacher_image, student_image), ann
+
+        teacher_ann = copy.deepcopy(ann)
+        for transform in self.transform.transforms:
+            teacher_image, teacher_ann = transform(teacher_image, teacher_ann)
+            student_image, ann = transform(student_image, ann)
+        return (teacher_image, student_image), ann
     
     def __getitem__(self, idx_):
         # print(idx_)
@@ -285,6 +308,16 @@ class TrainDataset(Dataset):
             image = image_rotated
         # elif reminder == 6:
 
+        if self.return_adapt_pair:
+            teacher_image = rgb_to_grayscale_image(image)
+            student_image = self.raw_synthesizer.synthesize_rgb(image, iter_idx=self._next_raw_step())
+            student_image = np.clip(student_image, 0.0, 1.0) * 255.0
+            return self._transform_adapt_pair(
+                teacher_image.astype(float),
+                student_image.astype(float),
+                ann,
+            )
+
         if not self.return_rgb:
             image = self.raw_synthesizer.synthesize_rgb(image, iter_idx=self._next_raw_step())
             image = np.clip(image, 0.0, 1.0) * 255.0
@@ -301,5 +334,9 @@ class TrainDataset(Dataset):
         return len(self.annotations)*self.augmentation
 
 def collate_fn(batch):
-    return (default_collate([b[0] for b in batch]),
-            [b[1] for b in batch])
+    images = [b[0] for b in batch]
+    if isinstance(images[0], tuple):
+        images = tuple(default_collate([image[i] for image in images]) for i in range(len(images[0])))
+    else:
+        images = default_collate(images)
+    return (images, [b[1] for b in batch])

@@ -21,6 +21,8 @@ DATASETS:
     INVISP_CHECKPOINT: pretrained/invisp_canon.pth
     ENABLE_ELD_NOISE: true
     NOISE_MAXSTEP: 10
+    NOISE_RATIO_MIN: 1.0
+    NOISE_RATIO_MAX: 50.0
     OUTPUT_MODE: gray_replicated
     DEVICE: cuda
   TARGET:
