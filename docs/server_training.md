@@ -101,7 +101,9 @@ DATASETS:
   RAW:
     INVISP_CHECKPOINT: pretrained/invisp_canon.pth
     ENABLE_ELD_NOISE: true
-    NOISE_MAXSTEP: 10000
+    NOISE_MAXSTEP: 15000
+    NOISE_RATIO_MIN: 1.0
+    NOISE_RATIO_MAX: 50.0
     OUTPUT_MODE: gray_replicated
     DEVICE: cuda
 SOLVER:
@@ -110,7 +112,14 @@ SOLVER:
   BASE_LR: 0.0004
 ```
 
-`NOISE_MAXSTEP: 10000` means ELD exposure ratio is warmed up from `1` to the DarkFeat range `50-150` over the first 10000 Raw synthesis calls.
+`NOISE_MAXSTEP: 15000` means ELD exposure ratio is warmed up over the first 15000 Raw synthesis calls. The current full-noise multiplier range is `[1, 50]`, with:
+
+```text
+ratio_dec = min(step, NOISE_MAXSTEP) / NOISE_MAXSTEP
+ratio = (uniform(NOISE_RATIO_MIN, NOISE_RATIO_MAX) - 1) * ratio_dec + 1
+```
+
+At `ratio_dec=0`, the multiplier is exactly `1`. At `ratio_dec=1`, the multiplier is sampled from `[1, 50]`.
 
 Before a long run, copy the config and edit only machine-specific training settings:
 
@@ -122,7 +131,8 @@ Common server edits:
 
 - `SOLVER.IMS_PER_BATCH`: set according to GPU memory.
 - `DATALOADER.NUM_WORKERS`: keep `0` for the current strict global Raw noise warmup behavior. If this is raised above `0`, each DataLoader worker has its own dataset counter, so the Raw noise warmup is no longer a single process-global counter.
-- `DATASETS.RAW.NOISE_MAXSTEP`: keep `10000` unless intentionally changing the noise curriculum.
+- `DATASETS.RAW.NOISE_MAXSTEP`: keep `15000` unless intentionally changing the noise curriculum.
+- `DATASETS.RAW.NOISE_RATIO_MIN` and `DATASETS.RAW.NOISE_RATIO_MAX`: keep `1.0` and `50.0` for the current formal full-noise range.
 - `DATASETS.RAW.INVISP_CHECKPOINT`: keep `pretrained/invisp_canon.pth` if using the committed checkpoint.
 
 ## 5. Preflight Checks
@@ -163,19 +173,25 @@ python -m hawp.fsl.adapt_raw configs/rawplnet_server.yaml \
   --epochs 10
 ```
 
-Expected output checkpoint:
+The default adapt optimizer settings are `--lr 1e-4`, `--lr-scheduler cosine_after_noise`, and `--lr-min 1e-5`. With `cosine_after_noise`, the adapt learning rate stays fixed until `DATASETS.RAW.NOISE_MAXSTEP`, then cosine decays toward `--lr-min` for the remaining adapt steps. `--lr-decay-start` defaults to `DATASETS.RAW.NOISE_MAXSTEP`.
+
+Expected output checkpoints:
 
 ```text
+outputs/adapt_raw/adapt_raw_noise_warmup_done.pth
+outputs/adapt_raw/adapt_raw_epoch_00001.pth
+outputs/adapt_raw/adapt_raw_epoch_00002.pth
+...
 outputs/adapt_raw/adapt_raw_final.pth
 ```
 
 Adapt data flow:
 
-- Teacher: augmented RGB image -> original PLNet teacher -> detector and descriptor outputs.
+- Teacher: augmented RGB image -> explicit RGB to grayscale -> original PLNet teacher -> detector and descriptor outputs.
 - Student: same augmented RGB image -> InvISP pseudo Raw -> ELD noisy Raw -> demosaiced Raw -> grayscale replicated input -> Raw student.
 - Losses: detector cross entropy plus descriptor cosine loss.
 
-The teacher is frozen and in eval mode. The student is initialized from `pretrained/plnet.pth`.
+The teacher is frozen and in eval mode. The student is initialized from `pretrained/plnet.pth`. Teacher and student use the same augmented/geometrically transformed RGB source image before their branches diverge, so distillation targets remain spatially aligned.
 
 ## 7. Stage 2: Formal Line Training
 
@@ -250,4 +266,5 @@ Before launching a long job, confirm:
 - `python -m unittest discover tests -v` passes.
 - One-iteration adapt and train debug commands complete.
 - `configs/rawplnet_server.yaml` uses the intended batch size and keeps `DATASETS.RAW.ENABLE_ELD_NOISE: true`.
+- `configs/rawplnet_server.yaml` keeps `DATASETS.RAW.NOISE_MAXSTEP: 15000`, `NOISE_RATIO_MIN: 1.0`, and `NOISE_RATIO_MAX: 50.0` unless you are intentionally running a different noise curriculum.
 - The formal line training command uses `--resume outputs/adapt_raw/adapt_raw_final.pth`.
